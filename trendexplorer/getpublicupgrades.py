@@ -3,8 +3,14 @@ import selenium.common.exceptions #so that I can try-except selenium exceptions
 
 import time
 
-NUM_PAGES = 104 #how many pages of results are at that url
+#IMPORTANT NOTES
+#this version takes out the getting links (i have them stored in a file from a previous run) and just adds stocks until it breaks when you set up again (will have to delete old ones manually and the first one in the list isn't searched for)
+#if you want the full version, go to the last commit, add yahoo data, and figure out how to prevent connections from getting forcibly closed every now and then.
+#also if you run this again make sure to make it only pass US companies (or get the international ticker) because it will take an international ticker and find the US company with the same ticker.
 
+START_PAGE = 0
+END_PAGE = 104
+#last page is 104
 
 # LOGIN
 with open('data/userpass.txt', 'r') as file:
@@ -39,27 +45,39 @@ def get_report_pub_time(report_link):
 	time[0] = str(int(time[0]) - 5)
 	return ':'.join(time)
 
-def get_debt_equity_ratio(ticker):
-	driver.get('https://finance.yahoo.com/quote/' + ticker + '/key-statistics/')
-	return driver.find_element_by_xpath('//span[contains(text(), "Total Debt/Equity")]//parent::td//following-sibling::td').text
+#gets debt/equity ratio and name
+def get_yahoo_data(ticker):
+	try:
+		driver.get('https://finance.yahoo.com/quote/' + ticker + '/key-statistics/')
+		name = ' ('.join(driver.find_element_by_css_selector('h1').text.split(' (')[:-1])
+		return driver.find_element_by_xpath('//span[contains(text(), "Total Debt/Equity")]//parent::td//following-sibling::td').text, name
+	except selenium.common.exceptions.NoSuchElementException:
+		return None, None
 
-execution_list = []
-for page in range(0, NUM_PAGES):
-	driver.get('https://www.moodys.com/researchandratings/viewall/ratings-news/rating-action/00300E001/00300E001%7C005000/-/0/' + str(page) + '/p_published_date_time/-1/10-02-2019/10-02-2020/-/-1/-/-/-/en/global/pdf/-/rra')
-	time.sleep(1) #so the page loads by the time you check
-	reports = driver.find_elements_by_xpath('//a[contains(text(), "upgrades")]') #find links on the page which have text that includes the word "upgrades". 
-	company_links = [driver.find_element_by_xpath('(//a[contains(text(), "upgrades")])[' + str(x + 1) + ']//parent::td//following-sibling::td//child::a') for x in range(len(reports))] #only gets first listed company, which should be the one with the ticker. This decision can be questioned later.
-	for x in range(len(company_links)):
-		execution_list.append([company_links[x].get_attribute('href'), reports[x].get_attribute('href'), reports[x].text])
-
+file = open('data/execlist.txt', 'r')
+exec('execution_list = ' + file.readline())
+file.close()
 
 csv = open('data/upgradelist.csv', 'a')
-csv.write('Ticker|Publish Time|Debt/Equity|Details')
-for item in execution_list:
-	ticker = get_ticker(item[0])
-	print(item[0], ticker)
-	if ticker != None:
-		csv.write('\n' + ticker + '|' + get_report_pub_time(item[1]) + '|' + get_debt_equity_ratio(ticker) + '|' + item[2])
+for x in range(len(execution_list)):
+	item = execution_list[x]
+	try:
+		ticker = get_ticker(item[0])
+		print(item[0], ticker)
+		if ticker != None:
+			leverage, name = get_yahoo_data(ticker)
+			if leverage == None:
+				continue
+			#ERROR breaks for solar winds holdings upgrade on 28 Jan 2020. May be related to error of data only going back to Jan 2020 (this is last stock)
+			csv.write('\n' + ticker + '|' + name + '|' + get_report_pub_time(item[1]) + '|' + leverage + '|' + item[2])
+			execution_list.pop(0)
+	except:
+		file = open('data/execlist.txt', 'w')
+		file.truncate()
+		print(execution_list)
+		file.write(str(execution_list))
+		file.close()
+		raise RuntimeError()
 
 csv.close()
 
